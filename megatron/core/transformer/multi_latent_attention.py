@@ -16,6 +16,7 @@ except ImportError:
 
 
 from megatron.core import tensor_parallel
+from megatron.core.dist_checkpointing.mapping import ShardedObject
 from megatron.core.models.common.embeddings import (
     RotaryEmbedding,
     YarnRotaryEmbedding,
@@ -39,15 +40,12 @@ from megatron.core.transformer.custom_layers.transformer_engine import (
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.transformer.transformer_config import MLATransformerConfig
-from megatron.core.dist_checkpointing.mapping import ShardedObject
 from megatron.core.utils import (
     deprecate_inference_params,
     get_pg_size,
     is_te_min_version,
     make_tp_sharded_tensor_for_checkpoint,
 )
-
-
 
 try:
     from megatron.core.fusions.fused_mla_yarn_rope_apply import (
@@ -62,8 +60,8 @@ except:
 try:
     from megatron.core.extensions.transformer_engine import (
         TEColumnParallelLinear,
-        TELinear,
         TELayerNormColumnParallelLinear,
+        TELinear,
         set_save_original_input,
     )
     from megatron.core.post_training.modelopt.layers import Linear
@@ -619,8 +617,10 @@ class MLASelfAttention(MultiLatentAttention):
                 self.config.q_lora_rank % tp_size == 0
             ), "q_lora_rank must be divisible by tensor-parallel size"
             assert (
-                (self.config.kv_lora_rank + self.config.qk_pos_emb_head_dim) % tp_size == 0
-            ), "kv_lora_rank + qk_pos_emb_head_dim must be divisible by tensor-parallel size"
+                self.config.kv_lora_rank + self.config.qk_pos_emb_head_dim
+            ) % tp_size == 0, (
+                "kv_lora_rank + qk_pos_emb_head_dim must be divisible by tensor-parallel size"
+            )
             q_split = self.config.q_lora_rank // tp_size
             kv_split = (self.config.kv_lora_rank + self.config.qk_pos_emb_head_dim) // tp_size
 
@@ -636,16 +636,10 @@ class MLASelfAttention(MultiLatentAttention):
         kv_key = f"{prefix}linear_kv_down_proj.weight"
 
         sharded_state_dict[q_key] = make_tp_sharded_tensor_for_checkpoint(
-            tensor=q_weight,
-            key=q_key,
-            tp_axis=0,
-            prepend_offsets=sharded_offsets,
+            tensor=q_weight, key=q_key, tp_axis=0, prepend_offsets=sharded_offsets
         )
         sharded_state_dict[kv_key] = make_tp_sharded_tensor_for_checkpoint(
-            tensor=kv_weight,
-            key=kv_key,
-            tp_axis=0,
-            prepend_offsets=sharded_offsets,
+            tensor=kv_weight, key=kv_key, tp_axis=0, prepend_offsets=sharded_offsets
         )
 
         return sharded_state_dict
@@ -772,7 +766,10 @@ class MLASelfAttention(MultiLatentAttention):
             qkv, _ = self.linear_qkv_down_proj(hidden_states)
             q_compressed, kv_combined = torch.split(
                 qkv,
-                [self.config.q_lora_rank, self.config.kv_lora_rank + self.config.qk_pos_emb_head_dim],
+                [
+                    self.config.q_lora_rank,
+                    self.config.kv_lora_rank + self.config.qk_pos_emb_head_dim,
+                ],
                 dim=-1,
             )
 

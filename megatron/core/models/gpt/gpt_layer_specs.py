@@ -201,7 +201,8 @@ def get_gpt_layer_with_transformer_engine_spec(
         qk_l2_norm (bool, optional): To use l2 norm for queries/keys. Defaults to False.
         use_te_op_fuser (bool, optional): Use Transformer Engine's operation-based API, which may
                                           enable certain operation fusions. Defaults to False.
-        fuse_mla_input_layernorm (bool, optional): Fuse MLA input layernorm with QKV down projection. 
+        fuse_mla_input_layernorm (bool, optional): Fuse MLA input layernorm with
+                                          QKV down projection.
     Returns:
         ModuleSpec: Module specification with TE modules
 
@@ -244,11 +245,7 @@ def get_gpt_layer_with_transformer_engine_spec(
             and backend.column_parallel_layer_norm_linear() is not None
         )
 
-        input_layernorm = (
-            IdentityOp 
-            if fuse_input_layernorm 
-            else backend.layer_norm()
-        )
+        input_layernorm = IdentityOp if fuse_input_layernorm else backend.layer_norm()
 
         linear_q_down_proj = (
             backend.column_parallel_layer_norm_linear()
@@ -296,9 +293,7 @@ def get_gpt_layer_with_transformer_engine_spec(
                 mlp=mlp,
                 mlp_bda=get_bias_dropout_add,
                 sharded_state_dict_keys_map=(
-                    {
-                        "self_attention.linear_qkv_down_proj.layer_norm_": "input_layernorm.",
-                    }
+                    {"self_attention.linear_qkv_down_proj.layer_norm_": "input_layernorm."}
                     if fuse_input_layernorm
                     else {}
                 ),
