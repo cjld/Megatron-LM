@@ -269,6 +269,7 @@ def get_gpt_layer_with_transformer_engine_spec(
             if qk_layernorm
             else backend.column_parallel_linear()
         )
+        linear_qkv_down_proj = linear_q_down_proj if qkv_down_proj_fusion else None
         return ModuleSpec(
             module=TransformerLayer,
             submodules=TransformerLayerSubmodules(
@@ -282,6 +283,7 @@ def get_gpt_layer_with_transformer_engine_spec(
                         linear_q_up_proj=linear_q_up_proj,
                         linear_kv_down_proj=linear_kv_down_proj,
                         linear_kv_up_proj=linear_kv_up_proj,
+                        linear_qkv_down_proj=linear_qkv_down_proj,
                         core_attention=backend.core_attention(),
                         linear_proj=backend.row_parallel_linear(),
                         q_layernorm=IdentityOp,
@@ -568,7 +570,7 @@ def get_gpt_decoder_layer_specs(
             use_te_activation_func=config.use_te_activation_func,
             use_kitchen_attention=config.use_kitchen_attention,
             kitchen_attention_backend=config.kitchen_attention_backend,
-            qkv_down_proj_fusion=getattr(config, 'qkv_down_proj_fusion', False),
+            qkv_down_proj_fusion=config.qkv_down_proj_fusion,
         )
         moe_layer_spec = get_gpt_layer_with_transformer_engine_spec(
             num_experts=config.num_moe_experts,
@@ -581,7 +583,7 @@ def get_gpt_decoder_layer_specs(
             use_te_activation_func=config.use_te_activation_func,
             use_kitchen_attention=config.use_kitchen_attention,
             kitchen_attention_backend=config.kitchen_attention_backend,
-            qkv_down_proj_fusion=getattr(config, 'qkv_down_proj_fusion', False),
+            qkv_down_proj_fusion=config.qkv_down_proj_fusion,
         )
     else:
         layer_norm_impl = LNImpl

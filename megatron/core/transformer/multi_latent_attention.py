@@ -87,6 +87,7 @@ class MLASelfAttentionSubmodules:
     linear_q_up_proj: Union[ModuleSpec, type] = None
     linear_kv_down_proj: Union[ModuleSpec, type] = None
     linear_kv_up_proj: Union[ModuleSpec, type] = None
+    linear_qkv_down_proj: Union[ModuleSpec, type] = None
     core_attention: Union[ModuleSpec, type] = None
     linear_proj: Union[ModuleSpec, type] = None
     q_layernorm: Union[ModuleSpec, type] = None
@@ -400,6 +401,7 @@ class MLASelfAttention(MultiLatentAttention):
             cp_comm_type=cp_comm_type,
             pg_collection=pg_collection,
         )
+        self.linear_qkv_down_proj = None
 
         if self.config.q_lora_rank is None:
             # Not projecting query
@@ -430,7 +432,7 @@ class MLASelfAttention(MultiLatentAttention):
             else:
                 raise ValueError(f"Unsupported linear_q_down_proj: {submodules.linear_q_down_proj}")
 
-            if not self.config.qkv_down_proj_fusion:
+            if submodules.linear_qkv_down_proj is None:
                 self.linear_q_down_proj = build_module(
                     submodules.linear_q_down_proj,
                     self.config.hidden_size,
@@ -477,7 +479,7 @@ class MLASelfAttention(MultiLatentAttention):
         else:
             raise ValueError(f"Unsupported linear_kv_down_proj: {submodules.linear_kv_down_proj}")
 
-        if not self.config.qkv_down_proj_fusion:
+        if submodules.linear_qkv_down_proj is None:
             self.linear_kv_down_proj = build_module(
                 submodules.linear_kv_down_proj,
                 self.config.hidden_size,
@@ -501,7 +503,7 @@ class MLASelfAttention(MultiLatentAttention):
                 kv_down_proj_kwargs == q_down_proj_kwargs
             ), "kv and q down proj kwargs must be the same to fuse"
             self.linear_qkv_down_proj = build_module(
-                submodules.linear_q_down_proj,
+                submodules.linear_qkv_down_proj,
                 self.config.hidden_size,
                 self.config.q_lora_rank
                 + self.config.kv_lora_rank
@@ -559,7 +561,7 @@ class MLASelfAttention(MultiLatentAttention):
         layouts, we materialize legacy keys and replicate any TE `_extra_state`
         blobs under the legacy module names.
         """
-        if not self.config.qkv_down_proj_fusion:
+        if self.linear_qkv_down_proj is None:
             return super().sharded_state_dict(prefix, sharded_offsets, metadata)
 
         sharded_state_dict = super().sharded_state_dict(prefix, sharded_offsets, metadata)
@@ -646,7 +648,7 @@ class MLASelfAttention(MultiLatentAttention):
 
     def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
         """Load state dict with automatic unfused->fused conversion."""
-        if not self.config.qkv_down_proj_fusion:
+        if self.linear_qkv_down_proj is None:
             return super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
         q_key = f"{prefix}linear_q_down_proj.weight"
@@ -736,7 +738,7 @@ class MLASelfAttention(MultiLatentAttention):
         # =========================================
         # QKV down projection and layernorm
         # =========================================
-        if not self.config.qkv_down_proj_fusion:
+        if self.linear_qkv_down_proj is None:
             if self.config.q_lora_rank is not None:
                 # if linear_q_down_proj is ColumnParallelLinear:
                 #     q_compressed: [s, b, q_lora_rank / TP]
@@ -762,7 +764,7 @@ class MLASelfAttention(MultiLatentAttention):
             #     kv_combined: [s / TP, b, (kv_lora_rank + qk_pos_emb_head_dim)]
             kv_combined, _ = self.linear_kv_down_proj(hidden_states)
 
-        if self.config.qkv_down_proj_fusion:
+        if self.linear_qkv_down_proj is not None:
             qkv, _ = self.linear_qkv_down_proj(hidden_states)
             q_compressed, kv_combined = torch.split(
                 qkv,
